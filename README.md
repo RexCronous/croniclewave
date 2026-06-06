@@ -23,7 +23,7 @@ A Discord music bot that seamlessly streams music from your personal music serve
 | `/play` | Place a specified track, album, or playlist at the end of the queue and start playing |
 | `/next` | Place a specified track next in the queue and start playing |
 | `/disco` | Play an artist's entire discography |
-| `/queue` | View the current queue |
+| `/queue` | View, remove, or move tracks in the current queue |
 | `/clear` | Clear the current queue |
 | `/shuffle` | Shuffle the current queue |
 | `/skip` | Skip the current track |

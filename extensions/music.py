@@ -18,6 +18,82 @@ from util import env
 
 logger = logging.getLogger(__name__)
 
+QUEUE_ITEMS_PER_PAGE = 10
+
+def build_queue_embed(current_song, queue: list, page: int, items_per_page: int = QUEUE_ITEMS_PER_PAGE) -> discord.Embed:
+    ''' Builds the queue embed for the selected page. '''
+
+    output = ""
+    if current_song is not None:
+        output += (
+            f"**Now Playing:**\n"
+            f"{current_song.title} - *{current_song.artist}*\n"
+            f"{current_song.album} ({current_song.duration_printable})\n\n"
+        )
+
+    if len(queue) == 0:
+        output += "Queue is empty!"
+        embed = discord.Embed(color=discord.Color(0x50C470), title="Queue", description=output)
+        return embed
+
+    page_count = max(1, (len(queue) + items_per_page - 1) // items_per_page)
+    page = max(0, min(page, page_count - 1))
+    start_index = page * items_per_page
+    end_index = min(start_index + items_per_page, len(queue))
+
+    for index, song in enumerate(queue[start_index:end_index], start=start_index + 1):
+        output += f"{index}. **{song.title}** - *{song.artist}*\n{song.album} ({song.duration_printable})\n\n"
+
+    if len(output) > 4096:
+        output = output[:4093] + "..."
+
+    embed = discord.Embed(color=discord.Color(0x50C470), title="Queue", description=output)
+    embed.set_footer(text=f"Page {page + 1} of {page_count} | {len(queue)} queued")
+    return embed
+
+def format_queue_song(song) -> str:
+    ''' Formats a song for queue edit confirmation messages. '''
+    return f"**{song.title}** - *{song.artist}*"
+
+class QueueView(discord.ui.View):
+    ''' Button controls for paged queue output. '''
+
+    def __init__(self, user_id: int, current_song, queue: list, items_per_page: int = QUEUE_ITEMS_PER_PAGE) -> None:
+        super().__init__(timeout=180)
+        self.user_id = user_id
+        self.current_song = current_song
+        self.queue = list(queue)
+        self.items_per_page = items_per_page
+        self.page = 0
+        self.page_count = max(1, (len(self.queue) + self.items_per_page - 1) // self.items_per_page)
+        self._update_buttons()
+
+    async def interaction_check(self, interaction: Interaction) -> bool:
+        if interaction.user.id == self.user_id:
+            return True
+
+        await interaction.response.send_message("Only the user who ran `/queue` can change this page.", ephemeral=True)
+        return False
+
+    def current_embed(self) -> discord.Embed:
+        return build_queue_embed(self.current_song, self.queue, self.page, self.items_per_page)
+
+    def _update_buttons(self) -> None:
+        self.previous_page.disabled = self.page <= 0
+        self.next_page.disabled = self.page >= self.page_count - 1
+
+    @discord.ui.button(label="Prev", style=discord.ButtonStyle.secondary)
+    async def previous_page(self, interaction: Interaction, button: discord.ui.Button) -> None:
+        self.page = max(0, self.page - 1)
+        self._update_buttons()
+        await interaction.response.edit_message(embed=self.current_embed(), view=self)
+
+    @discord.ui.button(label="Next", style=discord.ButtonStyle.secondary)
+    async def next_page(self, interaction: Interaction, button: discord.ui.Button) -> None:
+        self.page = min(self.page_count - 1, self.page + 1)
+        self._update_buttons()
+        await interaction.response.edit_message(embed=self.current_embed(), view=self)
+
 class MusicCog(commands.Cog):
     ''' A Cog containing music playback commands '''
 
@@ -427,37 +503,64 @@ class MusicCog(commands.Cog):
 
 
 
-    @app_commands.command(name="queue", description="View the current queue")
-    async def show_queue(self, interaction: Interaction) -> None:
-        ''' Show the current queue '''
+    @app_commands.command(name="queue", description="View or edit the current queue")
+    @app_commands.describe(action="Queue action to perform", index="Queue index to edit", target="Queue position to move the track to")
+    @app_commands.choices(action=[
+        app_commands.Choice(name="Remove", value="remove"),
+        app_commands.Choice(name="Move", value="move"),
+    ])
+    async def show_queue(self, interaction: Interaction, action: app_commands.Choice[str]=None, index: int=None, target: int=None) -> None:
+        ''' Show or edit the current queue '''
 
-        # Get the audio queue for the current guild
-        queue = data.guild_data(interaction.guild_id).player.queue
+        player = data.guild_data(interaction.guild_id).player
+        queue = player.queue
 
-        # Create a string to store the output of our queue
-        output = ""
+        if action is not None:
+            if len(queue) == 0:
+                await ui.ErrMsg.queue_is_empty(interaction)
+                return
 
-        # Add currently playing song to output if available
-        if data.guild_data(interaction.guild_id).player.current_song is not None:
-            song = data.guild_data(interaction.guild_id).player.current_song
-            output += f"**Now Playing:**\n{song.title} - *{song.artist}*\n{song.album} ({song.duration_printable})\n\n"
+            if index is None:
+                await ui.ErrMsg.msg(interaction, "Please provide a queue index.")
+                return
 
-        # Loop over our queue, adding each song into our output string
-        for i, song in enumerate(queue):
-            strtoadd = f"{i+1}. **{song.title}** - *{song.artist}*\n{song.album} ({song.duration_printable})\n\n"
-            if len(output+strtoadd) < 4083:
-                output += strtoadd
-            else:
-                remaining = len(queue) - i
-                output += f"**And {remaining} more...**"
-                break
+            if index < 1 or index > len(queue):
+                await ui.ErrMsg.msg(interaction, f"Queue index must be between 1 and {len(queue)}.")
+                return
 
-        # Check if our output string is empty & update it accordingly
-        if output == "":
-            output = "Queue is empty!"
+            if action.value == "remove":
+                removed_song = queue.pop(index - 1)
+                data.save_guild_properties_to_disk()
+                await ui.SysMsg.msg(interaction, "Removed from queue", f"{index}. {format_queue_song(removed_song)}")
+                return
 
-        # Show the user their queue
-        await ui.SysMsg.msg(interaction, "Queue", output)
+            if target is None:
+                await ui.ErrMsg.msg(interaction, "Please provide a target position.")
+                return
+
+            if target < 1 or target > len(queue):
+                await ui.ErrMsg.msg(interaction, f"Target position must be between 1 and {len(queue)}.")
+                return
+
+            if index == target:
+                await ui.ErrMsg.msg(interaction, "That track is already in that position.")
+                return
+
+            moved_song = queue.pop(index - 1)
+            queue.insert(target - 1, moved_song)
+            data.save_guild_properties_to_disk()
+            await ui.SysMsg.msg(interaction, "Moved queue track", f"{format_queue_song(moved_song)}\n{index} -> {target}")
+            return
+
+        queue = list(player.queue)
+        view = QueueView(interaction.user.id, player.current_song, queue)
+        embed = view.current_embed()
+
+        if view.page_count == 1:
+            await interaction.response.send_message(embed=embed)
+            return
+
+        await interaction.response.send_message(embed=embed, view=view)
 
     @show_queue.error
     async def show_queue_error(self, ctx, error):
