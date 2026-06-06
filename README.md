@@ -29,6 +29,7 @@ A Discord music bot that seamlessly streams music from your personal music serve
 | `/skip` | Skip the current track |
 | `/stop` | Stop playing the current track |
 | `/autoplay` | Toggle autoplay |
+| `/audiobalance` | Configure automatic audio balancing |
 | `/playlists` | List available playlists |
 | `/playlist` | List songs in a playlist |
 | `/sync` | Sync application commnads (owner only) |

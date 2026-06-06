@@ -4,6 +4,7 @@
     TODO: Save one properties pickle file per-guild, instead of saving all in one file at once
 '''
 
+import copy
 import logging
 import os
 import pickle
@@ -62,16 +63,32 @@ class AutoplayMode(Enum):
     RANDOM : Final[int] = 1
     SIMILAR : Final[int] = 2
 
+class AudioBalanceMode(Enum):
+    ''' Enum representing an audio balancing mode '''
+    OFF : Final[int] = 0
+    REPLAYGAIN : Final[int] = 1
+    DYNAMIC : Final[int] = 2
+
 _default_properties: dict[str, any] = {
     "queue": None,
     "autoplay-mode": AutoplayMode.NONE,
+    "audio-balance-mode": AudioBalanceMode.DYNAMIC,
 }
 
+def _properties_with_defaults(properties: dict[str, any]) -> dict[str, any]:
+    ''' Return a per-guild properties dict with any missing defaults added. '''
+    updated_properties = copy.copy(_default_properties)
+    updated_properties.update(properties)
+    return updated_properties
 
 class GuildProperties():
     ''' Class that holds all Discodrome properties specific to a guild (saved to disk) '''
     def __init__(self) -> None:
-        self._properties = _default_properties
+        self._properties = copy.copy(_default_properties)
+
+    def ensure_defaults(self) -> None:
+        ''' Add missing defaults and break shared default dict references. '''
+        self._properties = _properties_with_defaults(self._properties)
 
     @property
     def autoplay_mode(self) -> AutoplayMode:
@@ -81,6 +98,15 @@ class GuildProperties():
     @autoplay_mode.setter
     def autoplay_mode(self, value: AutoplayMode) -> None:
         self._properties["autoplay-mode"] = value
+
+    @property
+    def audio_balance_mode(self) -> AudioBalanceMode:
+        '''The audio balancing mode in use by this guild'''
+        return self._properties.get("audio-balance-mode", AudioBalanceMode.DYNAMIC)
+
+    @audio_balance_mode.setter
+    def audio_balance_mode(self, value: AudioBalanceMode) -> None:
+        self._properties["audio-balance-mode"] = value
 
     @property
     def queue(self) -> list[Song]:
@@ -98,6 +124,7 @@ def guild_properties(guild_id: int) -> GuildProperties:
 
     # Return property if guild exists
     if guild_id in _guild_property_instances:
+        _guild_property_instances[guild_id].ensure_defaults()
         return _guild_property_instances[guild_id]
 
     # Create & store new properties object if guild does not already exist
@@ -129,6 +156,8 @@ def load_guild_properties_from_disk() -> None:
     with open("guild_properties.pickle", "rb") as file:
         try:
             _guild_property_instances.update(pickle.load(file))
+            for properties in _guild_property_instances.values():
+                properties.ensure_defaults()
             logger.info("Guild properties loaded successfully.")
         except pickle.UnpicklingError as err:
             logger.error("Failed to load guild properties from disk.", exc_info=err)

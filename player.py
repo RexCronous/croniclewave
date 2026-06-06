@@ -1,5 +1,7 @@
 ''' A player object that handles playback and data for its respective guild '''
 
+from __future__ import annotations
+
 import asyncio
 import discord
 
@@ -9,6 +11,23 @@ import logging
 from subsonic import Song, APIError, get_random_songs, get_similar_songs, stream, get_album_art_file
 
 logger = logging.getLogger(__name__)
+
+def build_audio_filter(mode: data.AudioBalanceMode) -> str | None:
+    ''' Build an FFmpeg audio filter chain for the selected balance mode. '''
+
+    match mode:
+        case data.AudioBalanceMode.OFF:
+            return None
+        case data.AudioBalanceMode.REPLAYGAIN:
+            return "volume=replaygain=track:replaygain_noclip=1"
+        case data.AudioBalanceMode.DYNAMIC:
+            return ",".join([
+                "volume=replaygain=track:replaygain_noclip=1",
+                "dynaudnorm=f=250:g=15:p=0.95:m=10",
+                "alimiter=limit=0.95",
+            ])
+
+    return None
 
 class Player():
     ''' Class that represents an audio player '''
@@ -107,8 +126,11 @@ class Player():
             return
 
         # Get the stream from the Subsonic server, using the provided song's ID
-        ffmpeg_options = {"before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
-                           "options": "-filter:a volume=replaygain=track"}
+        ffmpeg_options = {"before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5"}
+        audio_balance_mode = data.guild_properties(voice_client.guild.id).audio_balance_mode
+        audio_filter = build_audio_filter(audio_balance_mode)
+        if audio_filter is not None:
+            ffmpeg_options["options"] = f"-filter:a {audio_filter}"
         try:
             stream_url = await stream(song.song_id)
             if not stream_url:
@@ -277,5 +299,3 @@ class Player():
             await self._send("Skipped track")
         else:
             await self._send("Error", "No track is playing.")
-
-

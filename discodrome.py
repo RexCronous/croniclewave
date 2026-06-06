@@ -86,7 +86,7 @@ class DiscodromeClient(commands.Bot):
     async def on_ready(self) -> None:
         ''' Event called when the client is done preparing. '''
 
-        activity = discord.Activity(type=discord.ActivityType.playing, name=env.BOT_STATUS)
+        activity = discord.Activity(type=discord.ActivityType.listening, name=env.BOT_STATUS, application_id=env.APP_ID)
         await self.change_presence(activity=activity)
 
         logger.info("Logged as: %s | Connected Guilds: %s | Loaded Extensions: %s", self.user, len(self.guilds), list(self.extensions))
