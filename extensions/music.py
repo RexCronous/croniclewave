@@ -501,6 +501,7 @@ class MusicCog(commands.Cog):
 
         player = data.guild_data(interaction.guild_id).player
         player.channel = interaction.channel
+        await ui.SysMsg.skipping(interaction)
         await player.skip_track(voice_client)
 
     @skip.error
@@ -529,6 +530,7 @@ class MusicCog(commands.Cog):
                 data.guild_properties(interaction.guild_id).autoplay_mode = data.AutoplayMode.RANDOM
             case "similar":
                 data.guild_properties(interaction.guild_id).autoplay_mode = data.AutoplayMode.SIMILAR
+        data.save_guild_properties_to_disk()
 
         # Display message indicating new status of autoplay
         if mode.value == "none":
@@ -582,6 +584,7 @@ class MusicCog(commands.Cog):
                 data.guild_properties(interaction.guild_id).audio_balance_mode = data.AudioBalanceMode.REPLAYGAIN
             case "dynamic":
                 data.guild_properties(interaction.guild_id).audio_balance_mode = data.AudioBalanceMode.DYNAMIC
+        data.save_guild_properties_to_disk()
 
         await ui.SysMsg.msg(
             interaction,

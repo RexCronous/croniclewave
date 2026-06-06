@@ -5,22 +5,23 @@ from __future__ import annotations
 import asyncio
 import discord
 
-import data
 import logging
+from typing import Any
 
+from models import AudioBalanceMode, AutoplayMode
 from subsonic import Song, APIError, get_random_songs, get_similar_songs, stream, get_album_art_file
 
 logger = logging.getLogger(__name__)
 
-def build_audio_filter(mode: data.AudioBalanceMode) -> str | None:
+def build_audio_filter(mode: AudioBalanceMode) -> str | None:
     ''' Build an FFmpeg audio filter chain for the selected balance mode. '''
 
     match mode:
-        case data.AudioBalanceMode.OFF:
+        case AudioBalanceMode.OFF:
             return None
-        case data.AudioBalanceMode.REPLAYGAIN:
+        case AudioBalanceMode.REPLAYGAIN:
             return "volume=replaygain=track:replaygain_noclip=1"
-        case data.AudioBalanceMode.DYNAMIC:
+        case AudioBalanceMode.DYNAMIC:
             return ",".join([
                 "volume=replaygain=track:replaygain_noclip=1",
                 "dynaudnorm=f=250:g=15:p=0.95:m=10",
@@ -31,13 +32,14 @@ def build_audio_filter(mode: data.AudioBalanceMode) -> str | None:
 
 class Player():
     ''' Class that represents an audio player '''
-    def __init__(self) -> None:
+    def __init__(self, guild_properties: Any) -> None:
         self._data = {
             "current-song": None,
             "current-position": 0,
             "queue": [],
             "channel": None,
         }
+        self._guild_properties = guild_properties
         self._player_loop = None
         self._stopped = False
 
@@ -87,6 +89,11 @@ class Player():
     def channel(self, channel: discord.TextChannel) -> None:
         self._data["channel"] = channel
 
+    @property
+    def guild_properties(self) -> Any:
+        ''' The guild's saved player properties. '''
+        return self._guild_properties
+
     async def _send(self, title: str, description: str = None, thumbnail: str = None) -> None:
         ''' Sends a notification embed to the player's channel '''
         if self.channel is None:
@@ -127,8 +134,7 @@ class Player():
 
         # Get the stream from the Subsonic server, using the provided song's ID
         ffmpeg_options = {"before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5"}
-        audio_balance_mode = data.guild_properties(voice_client.guild.id).audio_balance_mode
-        audio_filter = build_audio_filter(audio_balance_mode)
+        audio_filter = build_audio_filter(self.guild_properties.audio_balance_mode)
         if audio_filter is not None:
             ffmpeg_options["options"] = f"-filter:a {audio_filter}"
         try:
@@ -204,27 +210,26 @@ class Player():
     async def handle_autoplay(self, prev_song_id: str=None) -> bool:
         ''' Handles populating the queue when autoplay is enabled '''
 
-        autoplay_mode = data.guild_properties(self.channel.guild.id).autoplay_mode
-        queue = data.guild_data(self.channel.guild.id).player.queue
+        autoplay_mode = self.guild_properties.autoplay_mode
         logger.debug("Handling autoplay...")
         logger.debug(f"Autoplay mode: {autoplay_mode}")
-        logger.debug(f"Queue: {queue}")
+        logger.debug(f"Queue: {self.queue}")
         # If queue is notempty or autoplay is disabled, don't handle autoplay
-        if queue != [] or autoplay_mode is data.AutoplayMode.NONE:
+        if self.queue != [] or autoplay_mode is AutoplayMode.NONE:
             return False
 
         # If there was no previous song provided, we default back to selecting a random song
         if prev_song_id is None:
-            autoplay_mode = data.AutoplayMode.RANDOM
+            autoplay_mode = AutoplayMode.RANDOM
             logging.info("No previous song ID provided. Defaulting to random.")
 
         songs = []
 
         try:
             match autoplay_mode:
-                case data.AutoplayMode.RANDOM:
+                case AutoplayMode.RANDOM:
                     songs = await get_random_songs(size=1)
-                case data.AutoplayMode.SIMILAR:
+                case AutoplayMode.SIMILAR:
                     logger.debug(f"Prev song ID: {prev_song_id}")
                     songs = await get_similar_songs(song_id=prev_song_id, count=1)
 
