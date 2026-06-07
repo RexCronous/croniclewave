@@ -1,10 +1,11 @@
-''' Data used throughout the application '''
+"""Data used throughout the application"""
 
 import copy
 import json
 import logging
 import os
 import pickle
+import threading
 
 from typing import Any
 
@@ -17,8 +18,10 @@ logger = logging.getLogger(__name__)
 GUILD_PROPERTIES_FILE = "guild_properties.json"
 LEGACY_GUILD_PROPERTIES_FILE = "guild_properties.pickle"
 
-class GuildData():
-    ''' Class that holds all Discodrome data specific to a guild (not saved to disk) '''
+
+class GuildData:
+    """Class that holds all Discodrome data specific to a guild (not saved to disk)"""
+
     def __init__(self, guild_id: int) -> None:
         self._data = {
             "player": None,
@@ -29,17 +32,19 @@ class GuildData():
 
     @property
     def player(self) -> Player:
-        '''The guild's player.'''
+        """The guild's player."""
         return self._data["player"]
-    
+
     @player.setter
     def player(self, value: Player) -> None:
         self._data["player"] = value
 
-_guild_data_instances: dict[int, GuildData] = {} # Dictionary to store temporary data for each guild instance
+
+_guild_data_instances: dict[int, GuildData] = {}  # Dictionary to store temporary data for each guild instance
+
 
 def guild_data(guild_id: int) -> GuildData:
-    ''' Returns the temporary data for the chosen guild '''
+    """Returns the temporary data for the chosen guild"""
 
     # Return property if guild exists
     if guild_id in _guild_data_instances:
@@ -51,7 +56,7 @@ def guild_data(guild_id: int) -> GuildData:
     # Load queue from disk if it exists
     properties = guild_properties(guild_id)
     if properties.queue is not None:
-        data.player.queue = properties.queue
+        data.player.queue = list(properties.queue)
 
     _guild_data_instances[guild_id] = data
     return _guild_data_instances[guild_id]
@@ -63,14 +68,16 @@ _default_properties: dict[str, Any] = {
     "audio-balance-mode": AudioBalanceMode.DYNAMIC,
 }
 
+
 def _properties_with_defaults(properties: dict[str, Any]) -> dict[str, Any]:
-    ''' Return a per-guild properties dict with any missing defaults added. '''
+    """Return a per-guild properties dict with any missing defaults added."""
     updated_properties = copy.copy(_default_properties)
     updated_properties.update(properties)
     return updated_properties
 
+
 def _enum_from_value(enum_class: type[AutoplayMode] | type[AudioBalanceMode], value: Any, default: Any) -> Any:
-    ''' Parse a persisted enum value from name, value, or enum instance. '''
+    """Parse a persisted enum value from name, value, or enum instance."""
     if isinstance(value, enum_class):
         return value
 
@@ -88,8 +95,9 @@ def _enum_from_value(enum_class: type[AutoplayMode] | type[AudioBalanceMode], va
     except (TypeError, ValueError):
         return default
 
+
 def _song_to_dict(song: Song) -> dict[str, Any]:
-    ''' Serialize a song for JSON persistence. '''
+    """Serialize a song for JSON persistence."""
     return {
         "id": song.song_id,
         "title": song.title,
@@ -99,19 +107,23 @@ def _song_to_dict(song: Song) -> dict[str, Any]:
         "duration": song.duration,
     }
 
+
 def _song_from_dict(song_data: dict[str, Any]) -> Song:
-    ''' Deserialize a song from JSON persistence. '''
-    return Song({
-        "id": song_data.get("id", ""),
-        "title": song_data.get("title", "Unknown Track"),
-        "album": song_data.get("album", "Unknown Album"),
-        "artist": song_data.get("artist", "Unknown Artist"),
-        "coverArt": song_data.get("coverArt", ""),
-        "duration": song_data.get("duration", 0),
-    })
+    """Deserialize a song from JSON persistence."""
+    return Song(
+        {
+            "id": song_data.get("id", ""),
+            "title": song_data.get("title", "Unknown Track"),
+            "album": song_data.get("album", "Unknown Album"),
+            "artist": song_data.get("artist", "Unknown Artist"),
+            "coverArt": song_data.get("coverArt", ""),
+            "duration": song_data.get("duration", 0),
+        }
+    )
+
 
 class _LegacyGuildPropertiesUnpickler(pickle.Unpickler):
-    ''' Restricted unpickler for one-time migration from the old local state file. '''
+    """Restricted unpickler for one-time migration from the old local state file."""
 
     _allowed_classes = {
         ("data", "GuildProperties"),
@@ -127,18 +139,20 @@ class _LegacyGuildPropertiesUnpickler(pickle.Unpickler):
             return super().find_class(module, name)
         raise pickle.UnpicklingError(f"Unsupported class in legacy guild properties: {module}.{name}")
 
-class GuildProperties():
-    ''' Class that holds all Discodrome properties specific to a guild (saved to disk) '''
+
+class GuildProperties:
+    """Class that holds all Discodrome properties specific to a guild (saved to disk)"""
+
     def __init__(self) -> None:
         self._properties = copy.copy(_default_properties)
 
     def ensure_defaults(self) -> None:
-        ''' Add missing defaults and break shared default dict references. '''
+        """Add missing defaults and break shared default dict references."""
         self._properties = _properties_with_defaults(self._properties)
 
     @property
     def autoplay_mode(self) -> AutoplayMode:
-        '''The autoplay mode in use by this guild'''
+        """The autoplay mode in use by this guild"""
         return self._properties["autoplay-mode"]
 
     @autoplay_mode.setter
@@ -147,7 +161,7 @@ class GuildProperties():
 
     @property
     def audio_balance_mode(self) -> AudioBalanceMode:
-        '''The audio balancing mode in use by this guild'''
+        """The audio balancing mode in use by this guild"""
         return self._properties.get("audio-balance-mode", AudioBalanceMode.DYNAMIC)
 
     @audio_balance_mode.setter
@@ -163,7 +177,7 @@ class GuildProperties():
         self._properties["queue"] = value
 
     def to_dict(self) -> dict[str, Any]:
-        ''' Serialize guild properties for JSON persistence. '''
+        """Serialize guild properties for JSON persistence."""
         queue = self.queue
         return {
             "queue": None if queue is None else [_song_to_dict(song) for song in queue],
@@ -173,26 +187,18 @@ class GuildProperties():
 
     @classmethod
     def from_dict(cls, properties_data: dict[str, Any]) -> "GuildProperties":
-        ''' Deserialize guild properties from JSON persistence. '''
+        """Deserialize guild properties from JSON persistence."""
         properties = cls()
         properties.autoplay_mode = _enum_from_value(
-            AutoplayMode,
-            properties_data.get("autoplay-mode"),
-            AutoplayMode.NONE
+            AutoplayMode, properties_data.get("autoplay-mode"), AutoplayMode.NONE
         )
         properties.audio_balance_mode = _enum_from_value(
-            AudioBalanceMode,
-            properties_data.get("audio-balance-mode"),
-            AudioBalanceMode.DYNAMIC
+            AudioBalanceMode, properties_data.get("audio-balance-mode"), AudioBalanceMode.DYNAMIC
         )
 
         queue_data = properties_data.get("queue")
         if isinstance(queue_data, list):
-            properties.queue = [
-                _song_from_dict(song_data)
-                for song_data in queue_data
-                if isinstance(song_data, dict)
-            ]
+            properties.queue = [_song_from_dict(song_data) for song_data in queue_data if isinstance(song_data, dict)]
         else:
             properties.queue = None
 
@@ -200,10 +206,12 @@ class GuildProperties():
         return properties
 
 
-_guild_property_instances: dict[int, GuildProperties] = {} # Dictionary to store properties for each guild instance
+_guild_property_instances: dict[int, GuildProperties] = {}  # Dictionary to store properties for each guild instance
+_guild_properties_save_lock = threading.Lock()
+
 
 def guild_properties(guild_id: int) -> GuildProperties:
-    ''' Returns the properties for the chosen guild '''
+    """Returns the properties for the chosen guild"""
 
     # Return property if guild exists
     if guild_id in _guild_property_instances:
@@ -215,31 +223,33 @@ def guild_properties(guild_id: int) -> GuildProperties:
     _guild_property_instances[guild_id] = properties
     return _guild_property_instances[guild_id]
 
+
 def save_guild_properties_to_disk() -> None:
-    ''' Saves guild properties to disk. '''
+    """Saves guild properties to disk."""
 
-    # Copy the queues from each guild data into each guild property
-    for guild_id, properties in _guild_property_instances.items():
-        if guild_id in _guild_data_instances:
-            properties.queue = _guild_data_instances[guild_id].player.queue
+    with _guild_properties_save_lock:
+        # Copy queue snapshots from each guild data into each guild property.
+        for guild_id, properties in _guild_property_instances.items():
+            if guild_id in _guild_data_instances:
+                properties.queue = list(_guild_data_instances[guild_id].player.queue)
 
-    guild_properties_data = {
-        str(guild_id): properties.to_dict()
-        for guild_id, properties in _guild_property_instances.items()
-    }
-    saved_data = {"guilds": guild_properties_data}
-    temp_file = f"{GUILD_PROPERTIES_FILE}.tmp"
+        guild_properties_data = {
+            str(guild_id): properties.to_dict() for guild_id, properties in _guild_property_instances.items()
+        }
+        saved_data = {"guilds": guild_properties_data}
+        temp_file = f"{GUILD_PROPERTIES_FILE}.tmp"
 
-    try:
-        with open(temp_file, "w", encoding="utf-8") as file:
-            json.dump(saved_data, file, indent=2)
-        os.replace(temp_file, GUILD_PROPERTIES_FILE)
-        logger.info("Guild properties saved successfully.")
-    except (OSError, TypeError) as err:
-        logger.error("Failed to save guild properties to disk.", exc_info=err)
+        try:
+            with open(temp_file, "w", encoding="utf-8") as file:
+                json.dump(saved_data, file, indent=2)
+            os.replace(temp_file, GUILD_PROPERTIES_FILE)
+            logger.info("Guild properties saved successfully.")
+        except (OSError, TypeError) as err:
+            logger.error("Failed to save guild properties to disk.", exc_info=err)
+
 
 def load_guild_properties_from_disk() -> None:
-    ''' Loads guild properties that have been saved to disk. '''
+    """Loads guild properties that have been saved to disk."""
 
     if not os.path.exists(GUILD_PROPERTIES_FILE):
         if os.path.exists(LEGACY_GUILD_PROPERTIES_FILE):
@@ -274,8 +284,9 @@ def load_guild_properties_from_disk() -> None:
 
     logger.info("Guild properties loaded successfully.")
 
+
 def _load_legacy_guild_properties_from_disk() -> None:
-    ''' Loads and migrates guild properties from the old pickle file. '''
+    """Loads and migrates guild properties from the old pickle file."""
 
     try:
         with open(LEGACY_GUILD_PROPERTIES_FILE, "rb") as file:

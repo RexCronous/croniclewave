@@ -88,7 +88,7 @@ Pull the Docker image:
 docker pull 7eventy7/discodrome:latest
 ```
 
-Then run the container with the environment variables described in the Configuration section below.
+Copy `data.env.example` to `data.env`, fill in your local values, then run the container with the environment variables described in the Configuration section below.
 
 ---
 
@@ -104,10 +104,13 @@ Then run the container with the environment variables described in the Configura
 | `SUBSONIC_AUTH_MODE` | Authentication mode: `plaintext` or `token`. Token auth is highly recommended for security. | Yes |
 | `DISCORD_BOT_TOKEN` | Your Discord bot token | Yes |
 | `DISCORD_OWNER_ID` | Your Discord user ID | Yes |
-| `DISCORD_TEST_GUILD` | Guiold ID for testing during development. If set commands will be synced directly to this guild as well as globally. This means the commands will propagate immediately but will also be duplicated. | No |
+| `DISCORD_TEST_GUILD` | Guild ID for testing during development. If set, commands will be synced directly to this guild as well as globally. This means the commands will propagate immediately but will also be duplicated. | No |
+| `APP_ID` | Discord application/client ID for registering commands. | Yes |
 | `BOT_STATUS` | Custom status message for the bot | No |
 | `BOT_PREFIX` | Command prefix for the bot. If unset, prefix commands can still be used with an @mention. An empty string will cause all messages to be interpreted as commands. | No |
 | `BOT_SEARCH_SUGGESTION_COUNT` | Number of items to display in the autocomplete menu. Defaults to 5. | No |
+
+`SUBSONIC_AUTH_MODE` must be `token` or `plaintext`; `token` is the default and recommended value. `BOT_SEARCH_SUGGESTION_COUNT` must be at least 1.
 
 ### Supported Subsonic Servers
 

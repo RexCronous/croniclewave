@@ -137,5 +137,8 @@ dmypy.json
 # Python pickle files
 *.pickle
 
+# Runtime state and local configuration
+guild_properties.json
+
 # Visual Studio Code
 .vscode

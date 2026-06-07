@@ -1,20 +1,28 @@
-''' A player object that handles playback and data for its respective guild '''
+"""A player object that handles playback and data for its respective guild"""
 
 from __future__ import annotations
 
 import asyncio
-import discord
-
 import logging
 from typing import Any
 
+import discord
+
 from models import AudioBalanceMode, AutoplayMode
-from subsonic import Song, APIError, get_random_songs, get_similar_songs, stream, get_album_art_file
+from subsonic import APIError, Song, get_album_art_file, get_random_songs, get_similar_songs, stream
 
 logger = logging.getLogger(__name__)
 
+
+def save_guild_properties() -> None:
+    """Persist guild properties without importing data at module import time."""
+    import data
+
+    data.save_guild_properties_to_disk()
+
+
 def build_audio_filter(mode: AudioBalanceMode) -> str | None:
-    ''' Build an FFmpeg audio filter chain for the selected balance mode. '''
+    """Build an FFmpeg audio filter chain for the selected balance mode."""
 
     match mode:
         case AudioBalanceMode.OFF:
@@ -22,16 +30,20 @@ def build_audio_filter(mode: AudioBalanceMode) -> str | None:
         case AudioBalanceMode.REPLAYGAIN:
             return "volume=replaygain=track:replaygain_noclip=1"
         case AudioBalanceMode.DYNAMIC:
-            return ",".join([
-                "volume=replaygain=track:replaygain_noclip=1",
-                "dynaudnorm=f=250:g=15:p=0.95:m=10",
-                "alimiter=limit=0.95",
-            ])
+            return ",".join(
+                [
+                    "volume=replaygain=track:replaygain_noclip=1",
+                    "dynaudnorm=f=250:g=15:p=0.95:m=10",
+                    "alimiter=limit=0.95",
+                ]
+            )
 
     return None
 
-class Player():
-    ''' Class that represents an audio player '''
+
+class Player:
+    """Class that represents an audio player"""
+
     def __init__(self, guild_properties: Any) -> None:
         self._data = {
             "current-song": None,
@@ -42,10 +54,11 @@ class Player():
         self._guild_properties = guild_properties
         self._player_loop = None
         self._stopped = False
+        self._queue_lock = asyncio.Lock()
 
     @property
     def current_song(self) -> Song:
-        '''The current song'''
+        """The current song"""
         return self._data["current-song"]
 
     @current_song.setter
@@ -54,17 +67,17 @@ class Player():
 
     @property
     def current_position(self) -> int:
-        ''' The current position for the current song, in seconds. '''
+        """The current position for the current song, in seconds."""
         return self._data["current-position"]
 
     @current_position.setter
     def current_position(self, position: int) -> None:
-        ''' Set the current position for the current song, in seconds. '''
+        """Set the current position for the current song, in seconds."""
         self._data["current-position"] = position
 
     @property
     def queue(self) -> list[Song]:
-        ''' The current audio queue. '''
+        """The current audio queue."""
         return self._data["queue"]
 
     @queue.setter
@@ -73,16 +86,16 @@ class Player():
 
     @property
     def player_loop(self) -> asyncio.AbstractEventLoop:
-        ''' The player loop '''
+        """The player loop"""
         return self._player_loop
-    
+
     @player_loop.setter
     def player_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         self._player_loop = loop
 
     @property
     def channel(self) -> discord.TextChannel:
-        ''' The text channel to send player notifications to '''
+        """The text channel to send player notifications to"""
         return self._data["channel"]
 
     @channel.setter
@@ -91,11 +104,72 @@ class Player():
 
     @property
     def guild_properties(self) -> Any:
-        ''' The guild's saved player properties. '''
+        """The guild's saved player properties."""
         return self._guild_properties
 
+    def _sync_persistent_queue(self, *, save: bool = False) -> None:
+        """Keep the persisted guild queue in sync with the live player queue."""
+        if self.guild_properties is not None:
+            self.guild_properties.queue = list(self.queue)
+
+        if save:
+            save_guild_properties()
+
+    async def enqueue(self, song: Song, *, position: str = "end") -> None:
+        """Add a song to the queue and persist the new queue state."""
+        async with self._queue_lock:
+            if position == "front":
+                self.queue.insert(0, song)
+            elif position == "end":
+                self.queue.append(song)
+            else:
+                raise ValueError(f"Unknown queue position: {position}")
+            self._sync_persistent_queue(save=True)
+
+    async def extend_queue(self, songs: list[Song]) -> None:
+        """Add multiple songs to the queue and persist the new queue state."""
+        async with self._queue_lock:
+            self.queue.extend(songs)
+            self._sync_persistent_queue(save=True)
+
+    async def remove_queued_song(self, index: int) -> Song:
+        """Remove and return a queued song by zero-based index."""
+        async with self._queue_lock:
+            song = self.queue.pop(index)
+            self._sync_persistent_queue(save=True)
+            return song
+
+    async def move_queued_song(self, index: int, target: int) -> Song:
+        """Move a queued song between zero-based positions and persist the queue."""
+        async with self._queue_lock:
+            song = self.queue.pop(index)
+            self.queue.insert(target, song)
+            self._sync_persistent_queue(save=True)
+            return song
+
+    async def clear_queue(self) -> None:
+        """Clear the queue and persist the new queue state."""
+        async with self._queue_lock:
+            self.queue.clear()
+            self._sync_persistent_queue(save=True)
+
+    async def shuffle_queue(self, shuffled_queue: list[Song]) -> None:
+        """Replace the queue with a shuffled order and persist it."""
+        async with self._queue_lock:
+            self.queue = shuffled_queue
+            self._sync_persistent_queue(save=True)
+
+    async def _pop_next_queued_song(self) -> Song | None:
+        """Pop the next queued song under lock and persist the remaining queue."""
+        async with self._queue_lock:
+            if not self.queue:
+                return None
+            song = self.queue.pop(0)
+            self._sync_persistent_queue(save=True)
+            return song
+
     async def _send(self, title: str, description: str = None, thumbnail: str = None) -> None:
-        ''' Sends a notification embed to the player's channel '''
+        """Sends a notification embed to the player's channel"""
         if self.channel is None:
             logger.warning("Cannot send player notification: no channel set")
             return
@@ -109,12 +183,8 @@ class Player():
                 logger.error(f"Failed to attach thumbnail: {e}")
         await self.channel.send(file=file, embed=embed)
 
-
-
-
-
     async def stream_track(self, song: Song, voice_client: discord.VoiceClient) -> None:
-        ''' Streams a track from the Subsonic server to a connected voice channel, and updates guild data accordingly '''
+        """Streams a track from the Subsonic server to a connected voice channel, and updates guild data accordingly"""
 
         # Make sure the voice client is available and connected
         if voice_client is None:
@@ -195,7 +265,7 @@ class Player():
                 logger.info(f"Started playing: {song.title} by {song.artist}")
                 return  # Success, exit the function
             except discord.ClientException as e:
-                logger.error(f"Discord client exception while playing audio (attempt {attempt+1}): {e}")
+                logger.error(f"Discord client exception while playing audio (attempt {attempt + 1}): {e}")
                 attempt += 1
                 if attempt >= max_attempts:
                     await self._send("Error", "Failed to play audio after multiple attempts. Please try again.")
@@ -206,9 +276,8 @@ class Player():
                 await self._send("Error", "An error occurred while playing the audio. Please try again.")
                 return
 
-
-    async def handle_autoplay(self, prev_song_id: str=None) -> bool:
-        ''' Handles populating the queue when autoplay is enabled '''
+    async def handle_autoplay(self, prev_song_id: str = None) -> bool:
+        """Handles populating the queue when autoplay is enabled"""
 
         autoplay_mode = self.guild_properties.autoplay_mode
         logger.debug("Handling autoplay...")
@@ -235,20 +304,19 @@ class Player():
 
         except APIError as err:
             logging.error(f"API Error fetching song for autoplay, Code {err.errorcode}: {err.message}")
-        
+
         logger.debug(f"Autoplay song: {songs}")
 
         # If there's no match, throw an error
         if len(songs) == 0:
             await self._send("Error", "Failed to obtain a song for autoplay.")
             return False
-        
-        self.queue.append(songs[0])
+
+        await self.enqueue(songs[0])
         return True
 
-
     async def play_audio_queue(self, voice_client: discord.VoiceClient) -> None:
-        ''' Plays the audio queue '''
+        """Plays the audio queue"""
 
         # Check if the bot is connected to a voice channel; it's the caller's responsibility to open a voice channel
         if voice_client is None:
@@ -262,7 +330,9 @@ class Player():
         # Check if the queue contains songs
         if self.queue != []:
             # Pop the first item from the queue and stream the track
-            song = self.queue.pop(0)
+            song = await self._pop_next_queued_song()
+            if song is None:
+                return
             self.current_song = song
             cover_art = await get_album_art_file(song.cover_id)
             desc = f"**{song.title}** - *{song.artist}*\n{song.album} ({song.duration_printable})"
@@ -283,15 +353,14 @@ class Player():
             # If the queue is empty, playback has ended; we should let the user know
             await self._send("Playback ended")
 
-
     def stop(self, voice_client: discord.VoiceClient) -> None:
-        ''' Stops playback without advancing the queue '''
+        """Stops playback without advancing the queue"""
         self._stopped = True
         self.current_song = None
         voice_client.stop()
 
     async def skip_track(self, voice_client: discord.VoiceClient) -> None:
-        ''' Skips the current track and plays the next one in the queue '''
+        """Skips the current track and plays the next one in the queue"""
 
         # Check if the bot is connected to a voice channel; it's the caller's responsibility to open a voice channel
         if voice_client is None:

@@ -1,0 +1,21 @@
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = [
+    "E501",  # Existing code uses long Discord/user-facing messages.
+]
+
+[tool.ruff.lint.per-file-ignores]
+"data.py" = ["I001", "UP015", "UP039"]
+"discodrome.py" = ["E402", "E711", "F541", "I001"]
+"extensions/owner.py" = ["I001"]
+"pagination.py" = ["B007"]
+"ui.py" = ["I001"]
+"util/logs.py" = ["I001"]
